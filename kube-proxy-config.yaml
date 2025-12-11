@@ -1,0 +1,29 @@
+apiVersion: kubeproxy.config.k8s.io/v1alpha1
+kind: KubeProxyConfiguration
+metadata:
+  name: kube-proxy
+mode: "iptables"
+# Conntrack configuration
+conntrack:
+  # Minimum number of conntrack entries to allocate, 0 means keep current limit
+  min: 0
+  # Maximum number of NAT connections to track per CPU core, 0 means keep previous limit
+  maxPerCore: 0
+  # TCP connection timeout in seconds for close-wait connections
+  tcpCloseWaitTimeout: "1h0m0s"
+  # TCP connection timeout in seconds for established connections
+  tcpEstablishedTimeout: "24h0m0s"
+# UDP connection timeout
+udpTimeout: "1m0s"
+# Enable nodePort addresses on localhost
+nodePortAddresses: ["0.0.0.0/0"]
+# Omit service cluster IP from iptables rules
+omitServiceClusterIPs: false
+# Health check configuration
+healthzBindAddress: "0.0.0.0:10256"
+# Metrics configuration
+metricsBindAddress: "0.0.0.0:10249"
+# Enable logging
+enableProfiling: false
+# Cluster CIDR (will be set from pod network CIDR)
+# clusterCIDR: "10.244.0.0/16"

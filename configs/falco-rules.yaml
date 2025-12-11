@@ -1,0 +1,239 @@
+# Falco security rules for CKS exam preparation
+# Including custom rules from existing falcohost configuration
+
+# List definitions for sensitive files and processes
+- list: sensitive_files
+  items: [/etc/passwd, /etc/shadow, /etc/sudoers, /etc/hosts, /root/.ssh/, /home/*/.ssh/]
+
+- list: memoryfile
+  items: [/dev/mem, /dev/kmem, /dev/port]
+
+- list: critical_binaries
+  items: [/bin/mount, /bin/umount, /usr/sbin/iptables, /usr/bin/apt, /usr/bin/apt-get]
+
+- list: network_tools
+  items: [nmap, netcat, nc, telnet, wget, curl]
+
+- list: suspicious_processes
+  items: [nc, netcat, ncat, nc.traditional, socat, wireshark, tcpdump]
+
+# Rule: Detect access to memory devices (from existing configuration)
+- rule: Detect Memory Access
+  desc: Detect attempts to access memory devices
+  condition: >
+    fd.name in (memoryfile)
+  output: >
+    Memory device access detected (user=%user.name command=%proc.cmdline container=%container.name fd=%fd.name)
+  priority: HIGH
+  tags: [security, memory, cks]
+
+# Rule: Detect privileged container creation
+- rule: Detect Privileged Container
+  desc: Detect creation of privileged containers
+  condition: >
+    k8s.audit.name and k8s.audit.verb="create" and k8s.audit.objectRef.resource="pods" and
+    (k8s.pod.spec.securityContext.privileged=true or k8s.pod.spec.containers.*.securityContext.privileged=true)
+  output: >
+    Privileged container created (user=%ka.user.name pod=%ka.resp.name namespace=%ka.resp.namespace)
+  priority: WARNING
+  tags: [security, privileged, cks]
+
+# Rule: Detect hostPID or hostNetwork usage
+- rule: Detect Host Namespace Access
+  desc: Detect pods using host namespaces
+  condition: >
+    k8s.audit.name and k8s.audit.verb="create" and k8s.audit.objectRef.resource="pods" and
+    (k8s.pod.spec.hostPID=true or k8s.pod.spec.hostNetwork=true or k8s.pod.spec.hostIPC=true)
+  output: >
+    Pod with host namespace access created (user=%ka.user.name pod=%ka.resp.name namespace=%ka.resp.namespace hostPID=%k8s.pod.spec.hostPID hostNetwork=%k8s.pod.spec.hostNetwork hostIPC=%k8s.pod.spec.hostIPC)
+  priority: WARNING
+  tags: [security, host-namespace, cks]
+
+# Rule: Detect mounting of sensitive host paths
+- rule: Detect Sensitive Host Mount
+  desc: Detect pods mounting sensitive host paths
+  condition: >
+    k8s.audit.name and k8s.audit.verb="create" and k8s.audit.objectRef.resource="pods" and
+    (k8s.pod.spec.volumes.*.hostPath.path contains "/etc" or
+     k8s.pod.spec.volumes.*.hostPath.path contains "/var/log" or
+     k8s.pod.spec.volumes.*.hostPath.path contains "/root" or
+     k8s.pod.spec.volumes.*.hostPath.path contains "/home")
+  output: >
+    Pod mounting sensitive host path created (user=%ka.user.name pod=%ka.resp.name namespace=%ka.resp.namespace path=%k8s.pod.spec.volumes.*.hostPath.path)
+  priority: HIGH
+  tags: [security, host-mount, cks]
+
+# Rule: Detect service account token mount
+- rule: Detect Service Account Token Mount
+  desc: Detect pods explicitly mounting service account tokens
+  condition: >
+    k8s.audit.name and k8s.audit.verb="create" and k8s.audit.objectRef.resource="pods" and
+    k8s.pod.spec.automountServiceAccountToken=true
+  output: >
+    Pod with service account token mounted (user=%ka.user.name pod=%ka.resp.name namespace=%ka.resp.namespace)
+  priority: INFO
+  tags: [security, service-account, cks]
+
+# Rule: Detect container escape attempts
+- rule: Detect Container Escape
+  desc: Detect potential container escape attempts
+  condition: >
+    spawned_process and
+    proc.name in (bash, sh, dash) and
+    proc.args contains "nsenter" and
+    proc.args contains "-t" and
+    proc.args contains "-m"
+  output: >
+    Container escape attempt detected (user=%user.name command=%proc.cmdline container=%container.name)
+  priority: HIGH
+  tags: [security, escape, cks]
+
+# Rule: Detect suspicious binary execution in containers
+- rule: Detect Suspicious Binary
+  desc: Detect execution of suspicious binaries in containers
+  condition: >
+    spawned_process and
+    container and
+    proc.name in (suspicious_processes)
+  output: >
+    Suspicious binary executed in container (user=%user.name command=%proc.cmdline container=%container.name binary=%proc.name)
+  priority: WARNING
+  tags: [security, malware, cks]
+
+# Rule: Detect modification of sensitive files
+- rule: Detect Sensitive File Modification
+  desc: Detect attempts to modify sensitive files
+  condition: >
+    open_write and fd.name in (sensitive_files)
+  output: >
+    Sensitive file modification attempt (user=%user.name command=%proc.cmdline file=%fd.name container=%container.name)
+  priority: HIGH
+  tags: [security, sensitive-file, cks]
+
+# Rule: Detect network connections to suspicious destinations
+- rule: Detect Suspicious Network Connection
+  desc: Detect network connections to suspicious destinations
+  condition: >
+    fd.type ipv4 and
+    (fd.sip.ip in (10.0.0.0/8, 192.168.0.0/16, 172.16.0.0/12) and not fd.cip.ip in (10.0.0.0/8, 192.168.0.0/16, 172.16.0.0/12)) and
+    not proc.name in (kubelet, kube-proxy, calico-node, etcd)
+  output: >
+    Suspicious network connection (user=%user.name command=%proc.cmdline sip=%fd.sip.ip sport=%fd.sport cip=%fd.cip.ip cport=%fd.cport)
+  priority: WARNING
+  tags: [security, network, cks]
+
+# Rule: Detect Kubernetes RBAC modifications
+- rule: Detect RBAC Modification
+  desc: Detect modifications to RBAC resources
+  condition: >
+    k8s.audit.name and k8s.audit.verb in (create, update, patch, delete) and
+    k8s.audit.objectRef.resource in (clusterroles, clusterrolebindings, roles, rolebindings)
+  output: >
+    RBAC resource modified (user=%ka.user.name verb=%ka.verb resource=%ka.resp.resource name=%ka.resp.name namespace=%ka.resp.namespace)
+  priority: WARNING
+  tags: [security, rbac, cks]
+
+# Rule: Detect Kubernetes API server access without authentication
+- rule: Detect Unauthenticated API Access
+  desc: Detect unauthenticated access to Kubernetes API server
+  condition: >
+    ka.target.resource and ka.user.name="system:anonymous" and ka.verb!="get" and ka.verb!="list" and ka.verb!="watch"
+  output: >
+    Unauthenticated API access detected (verb=%ka.verb resource=%ka.target.resource namespace=%ka.target.namespace)
+  priority: HIGH
+  tags: [security, authentication, cks]
+
+# Rule: Detect Mounting of Docker Socket
+- rule: Detect Docker Socket Mount
+  desc: Detect pods mounting Docker socket
+  condition: >
+    k8s.audit.name and k8s.audit.verb="create" and k8s.audit.objectRef.resource="pods" and
+    k8s.pod.spec.volumes.*.hostPath.path contains "/var/run/docker.sock"
+  output: >
+    Pod mounting Docker socket created (user=%ka.user.name pod=%ka.resp.name namespace=%ka.resp.namespace)
+  priority: HIGH
+  tags: [security, docker-socket, cks]
+
+# Rule: Detect exec into pod
+- rule: Detect Pod Exec
+  desc: Detect exec commands into pods
+  condition: >
+    k8s.audit.name and k8s.audit.verb="create" and k8s.audit.objectRef.resource="pods" and
+    k8s.audit.objectRef.subresource="exec"
+  output: >
+    Exec into pod detected (user=%ka.user.name pod=%ka.resp.name namespace=%ka.resp.namespace command=%ka.req.args)
+  priority: INFO
+  tags: [security, pod-exec, cks]
+
+# Rule: Detect port forward to pod
+- rule: Detect Pod Port Forward
+  desc: Detect port forwarding to pods
+  condition: >
+    k8s.audit.name and k8s.audit.verb="create" and k8s.audit.objectRef.resource="pods" and
+    k8s.audit.objectRef.subresource="portforward"
+  output: >
+    Port forward to pod detected (user=%ka.user.name pod=%ka.resp.name namespace=%ka.resp.namespace)
+  priority: WARNING
+  tags: [security, port-forward, cks]
+
+# Rule: Detect deletion of important resources
+- rule: Detect Critical Resource Deletion
+  desc: Detect deletion of critical Kubernetes resources
+  condition: >
+    k8s.audit.name and k8s.audit.verb="delete" and
+    (k8s.audit.objectRef.resource="namespaces" and k8s.audit.objectRef.name in (kube-system, kube-public, kube-node-lease) or
+     k8s.audit.objectRef.resource="clusterroles" and k8s.audit.objectRef.name in (cluster-admin, system:node, system:discovery) or
+     k8s.audit.objectRef.resource="clusterrolebindings" and k8s.audit.objectRef.name in (cluster-admin, system:node, system:discovery))
+  output: >
+    Critical resource deletion attempted (user=%ka.user.name resource=%ka.resp.resource name=%ka.resp.name namespace=%ka.resp.namespace)
+  priority: CRITICAL
+  tags: [security, deletion, cks]
+
+# Rule: Detect container with ALL capabilities
+- rule: Detect ALL Capabilities
+  desc: Detect containers with ALL capabilities
+  condition: >
+    k8s.audit.name and k8s.audit.verb="create" and k8s.audit.objectRef.resource="pods" and
+    k8s.pod.spec.containers.*.securityContext.add contains "ALL"
+  output: >
+    Container with ALL capabilities created (user=%ka.user.name pod=%ka.resp.name namespace=%ka.resp.namespace)
+  priority: HIGH
+  tags: [security, capabilities, cks]
+
+# Rule: Detect Pod Security Policy bypass attempts
+- rule: Detect PSP Bypass
+  desc: Detect attempts to bypass Pod Security Policies
+  condition: >
+    k8s.audit.name and k8s.audit.verb="create" and k8s.audit.objectRef.resource="pods" and
+    (k8s.pod.spec.securityContext.runAsUser=0 or k8s.pod.spec.containers.*.securityContext.runAsUser=0 or
+     k8s.pod.spec.securityContext.allowPrivilegeEscalation=true or k8s.pod.spec.containers.*.securityContext.allowPrivilegeEscalation=true)
+  output: >
+    Pod with potentially dangerous security context created (user=%ka.user.name pod=%ka.resp.name namespace=%ka.resp.namespace)
+  priority: WARNING
+  tags: [security, psp-bypass, cks]
+
+# Rule: Detect mounting of host filesystem
+- rule: Detect Host Filesystem Mount
+  desc: Detect pods mounting host filesystem
+  condition: >
+    k8s.audit.name and k8s.audit.verb="create" and k8s.audit.objectRef.resource="pods" and
+    (k8s.pod.spec.volumes.*.hostPath.path="/" or k8s.pod.spec.volumes.*.hostPath.path="/host")
+  output: >
+    Pod mounting host filesystem created (user=%ka.user.name pod=%ka.resp.name namespace=%ka.resp.namespace path=%k8s.pod.spec.volumes.*.hostPath.path)
+  priority: CRITICAL
+  tags: [security, host-fs, cks]
+
+# Rule: Detect image pull from untrusted registry
+- rule: Detect Untrusted Image
+  desc: Detect pods using images from untrusted registries
+  condition: >
+    k8s.audit.name and k8s.audit.verb="create" and k8s.audit.objectRef.resource="pods" and
+    (not k8s.pod.spec.containers.*.image contains "registry.k8s.io" and
+     not k8s.pod.spec.containers.*.image contains "k8s.gcr.io" and
+     not k8s.pod.spec.containers.*.image contains "docker.io" and
+     not k8s.pod.spec.containers.*.image contains "quay.io" and
+     not k8s.pod.spec.containers.*.image contains "ghcr.io")
+  output: >
+    Pod using untrusted registry image created (user=%ka.user.name pod=%ka.resp.name namespace=%ka.resp.namespace image=%k8s.pod.spec.containers.*.image)
+  priority: WARNING
+  tags: [security, untrusted-registry, cks]

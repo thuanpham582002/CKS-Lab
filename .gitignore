@@ -1,0 +1,15 @@
+# Ignore embedded git repositories
+certified-kubernetes-security-specialist-cks-course/.git
+cks-certification/.git
+
+# Environment files
+.env
+
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db

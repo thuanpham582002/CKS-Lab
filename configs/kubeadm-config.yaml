@@ -1,0 +1,288 @@
+# Kubernetes cluster initialization configuration with CIS benchmark compliance
+apiVersion: kubeadm.k8s.io/v1beta4
+kind: InitConfiguration
+nodeRegistration:
+  criSocket: unix:///var/run/containerd/containerd.sock
+  kubeletExtraArgs:
+    cgroup-driver: systemd
+    runtime-cgroups: /systemd/system.slice
+    kubelet-cgroups: /systemd/system.slice
+    # Security hardening options for kubelet
+    read-only-port: "0"
+    protect-kernel-defaults: "true"
+    authentication-token-webhook: "true"
+    authorization-mode: "Webhook"
+    event-qps: "0"
+    fail-swap-on: "false"
+    make-iptables-util-chains: "true"
+    iptables-masquerade-all: "false"
+    feature-gates: "RotateKubeletServerCertificate=true"
+    rotate-certificates: "true"
+    server-tls-bootstrap: "true"
+---
+apiVersion: kubeadm.k8s.io/v1beta4
+kind: ClusterConfiguration
+kubernetesVersion: v1.32.2
+controlPlaneEndpoint: "127.0.0.1:6443"
+clusterName: "cks-lab"
+imageRepository: "registry.k8s.io"
+
+# Networking configuration
+networking:
+  serviceSubnet: "10.96.0.0/12"
+  podSubnet: "10.244.0.0/16"
+  dnsDomain: "cluster.local"
+
+# API Server configuration with security hardening
+apiServer:
+  extraArgs:
+    # Authentication and Authorization
+    anonymous-auth: "false"
+    authorization-mode: "Node,RBAC"
+    enable-bootstrap-token-auth: "true"
+    token-auth-file: ""
+
+    # Admission Controllers (security-focused)
+    enable-admission-plugins: "NodeRestriction,PodSecurityPolicy,ServiceAccount,AlwaysPullImages,NamespaceLifecycle,LimitRanger,ServiceAccount,DefaultStorageClass,DefaultTolerationSeconds,ResourceQuota,PriorityClass"
+
+    # Audit Logging
+    audit-log-path: "/var/log/kubernetes/audit.log"
+    audit-policy-file: "/etc/kubernetes/audit-policy.yaml"
+    audit-log-maxage: "30"
+    audit-log-maxbackup: "10"
+    audit-log-maxsize: "100"
+
+    # Encryption
+    encryption-provider-config: "/etc/kubernetes/encryption-config.yaml"
+
+    # Security
+    profiling: "false"
+    request-timeout: "1m"
+    event-ttl: "1h"
+    log-flush-frequency: "5s"
+    enable-swagger-ui: "false"
+
+    # TLS Configuration
+    tls-cipher-suites: "TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256,TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384,TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305,TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256,TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384,TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305"
+    tls-min-version: "VersionTLS12"
+
+    # Service Account Configuration
+    service-account-key-file: "/etc/kubernetes/pki/sa.pub"
+    service-account-issuer: "kubernetes.default.svc.cluster.local"
+    service-account-signing-key-file: "/etc/kubernetes/pki/sa.key"
+    service-account-lookup: "true"
+
+    # Etcd Configuration
+    etcd-cafile: "/etc/kubernetes/pki/etcd/ca.crt"
+    etcd-certfile: "/etc/kubernetes/pki/apiserver-etcd-client.crt"
+    etcd-keyfile: "/etc/kubernetes/pki/apiserver-etcd-client.key"
+
+    # Additional Security
+    oidc-issuer-url: ""
+    oidc-client-id: ""
+    oidc-username-claim: ""
+    oidc-groups-claim: ""
+
+  # Extra volumes for API server
+  extraVolumes:
+  - name: "audit-log"
+    hostPath: "/var/log/kubernetes"
+    mountPath: "/var/log/kubernetes"
+    readOnly: false
+    pathType: "DirectoryOrCreate"
+  - name: "encryption-config"
+    hostPath: "/etc/kubernetes/encryption-config.yaml"
+    mountPath: "/etc/kubernetes/encryption-config.yaml"
+    readOnly: true
+    pathType: "File"
+  - name: "audit-policy"
+    hostPath: "/etc/kubernetes/audit-policy.yaml"
+    mountPath: "/etc/kubernetes/audit-policy.yaml"
+    readOnly: true
+    pathType: "File"
+
+# Controller Manager configuration
+controllerManager:
+  extraArgs:
+    # Security
+    bind-address: "127.0.0.1"
+    profiling: "false"
+    terminated-pod-gc-threshold: "100"
+    horizontal-pod-autoscaler-sync-period: "10s"
+    node-monitor-grace-period: "40s"
+    node-monitor-period: "5s"
+    pod-eviction-timeout: "5m0s"
+    controllers: "*,bootstrapsigner,tokencleaner"
+
+    # Certificate rotation
+    feature-gates: "RotateKubeletServerCertificate=true"
+
+    # Service account controller
+    root-ca-file: "/etc/kubernetes/pki/ca.crt"
+    service-account-private-key-file: "/etc/kubernetes/pki/sa.key"
+    use-service-account-credentials: "true"
+
+  extraVolumes:
+  - name: "ca-certs"
+    hostPath: "/etc/kubernetes/pki"
+    mountPath: "/etc/kubernetes/pki"
+    readOnly: true
+    pathType: "Directory"
+
+# Scheduler configuration
+scheduler:
+  extraArgs:
+    # Security
+    bind-address: "127.0.0.1"
+    profiling: "false"
+    algorithm-provider: "DefaultProvider"
+
+# Etcd configuration with security hardening
+etcd:
+  local:
+    dataDir: "/var/lib/etcd"
+    extraArgs:
+      # Security
+      listen-peer-urls: "https://0.0.0.0:2380"
+      listen-client-urls: "https://0.0.0.0:2379"
+      advertise-client-urls: "https://127.0.0.1:2379"
+      initial-advertise-peer-urls: "https://127.0.0.1:2380"
+      initial-cluster: "cks-lab=https://127.0.0.1:2380"
+      cert-file: "/etc/kubernetes/pki/etcd/server.crt"
+      key-file: "/etc/kubernetes/pki/etcd/server.key"
+      trusted-ca-file: "/etc/kubernetes/pki/etcd/ca.crt"
+      peer-cert-file: "/etc/kubernetes/pki/etcd/peer.crt"
+      peer-key-file: "/etc/kubernetes/pki/etcd/peer.key"
+      peer-trusted-ca-file: "/etc/kubernetes/pki/etcd/ca.crt"
+      peer-client-cert-auth: "true"
+      client-cert-auth: "true"
+
+      # Hardening
+      auto-compaction-retention: "1"
+      snapshot-count: "10000"
+      heartbeat-interval: "250"
+      election-timeout: "5000"
+      max-request-bytes: "1572864"
+      quota-backend-bytes: "8589934592"
+
+      # Logging
+      log-level: "info"
+      logger: "zap"
+
+# DNS configuration
+dns:
+  type: "CoreDNS"
+  imageRepository: "registry.k8s.io"
+  imageTag: "v1.11.1"
+  imagePullPolicy: "IfNotPresent"
+---
+# Kubelet configuration with CIS benchmark compliance
+apiVersion: kubelet.config.k8s.io/v1beta1
+kind: KubeletConfiguration
+
+# Authentication and Authorization
+authentication:
+  anonymous:
+    enabled: false
+  webhook:
+    enabled: true
+    cacheTTL: "2m0s"
+  x509:
+    clientCAFile: "/etc/kubernetes/pki/ca.crt"
+
+authorization:
+  mode: Webhook
+  webhook:
+    cacheAuthorizedTTL: "5m0s"
+    cacheUnauthorizedTTL: "30s"
+
+# Security Settings
+cgroupDriver: systemd
+readOnlyPort: 0
+protectKernelDefaults: true
+seccompDefault: true
+
+# Networking
+clusterDNS:
+- 10.96.0.10
+clusterDomain: "cluster.local"
+
+# Resource Management
+cpuManagerPolicy: "none"
+topologyManagerPolicy: "none"
+maxPods: 110
+podPidsLimit: 100
+
+# Event and Health Checks
+eventRecordQPS: 5
+eventBurst: 10
+healthzPort: 10248
+healthzBindAddress: "127.0.0.1"
+
+# TLS and Certificates
+serverTLSBootstrap: true
+rotateCertificates: true
+tlsCipherSuites: "TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256,TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384,TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305,TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256,TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384,TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305"
+tlsMinVersion: "VersionTLS12"
+
+# Feature Gates
+featureGates:
+  RotateKubeletServerCertificate: true
+
+# Filesystem and Mounts
+rootDirectory: "/var/lib/kubelet"
+volumePluginDir: "/usr/libexec/kubernetes/kubelet-plugins/volume/exec/"
+
+# Container Runtime
+containerRuntimeEndpoint: "unix:///var/run/containerd/containerd.sock"
+imageServiceEndpoint: "unix:///var/run/containerd/containerd.sock"
+
+# Image Management
+imageGCHighThresholdPercent: 85
+imageGCLowThresholdPercent: 80
+imageMinimumGCAge: "2m"
+
+# Pod and Container Settings
+podManifestPath: ""
+podManifestPath: ""
+podMaxPendingSeconds: 300
+
+# System Reserved
+systemReserved:
+  cpu: "200m"
+  memory: "256Mi"
+  ephemeral-storage: "1Gi"
+
+# Kube Reserved
+kubeReserved:
+  cpu: "200m"
+  memory: "256Mi"
+  ephemeral-storage: "1Gi"
+
+# Logging
+logging:
+  flushFrequency: 5
+  verbosity: 2
+  vmodule: ""
+
+# Eviction Settings
+evictionHard:
+  imagefs.available: "15%"
+  memory.available: "100Mi"
+  nodefs.available: "10%"
+  nodefs.inodesFree: "5%"
+
+evictionSoft:
+  imagefs.available: "20%"
+  memory.available: "200Mi"
+  nodefs.available: "15%"
+  nodefs.inodesFree: "10%"
+
+evictionSoftGracePeriod:
+  imagefs.available: "2m"
+  memory.available: "1m30s"
+  nodefs.available: "1m30s"
+  nodefs.inodesFree: "30s"
+
+evictionPressureTransitionPeriod: "30s"
+evictionMaxPodGracePeriod: 90
