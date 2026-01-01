@@ -13,7 +13,7 @@ nodeRegistration:
     authentication-token-webhook: "true"
     authorization-mode: "Webhook"
     event-qps: "0"
-    fail-swap-on: "false"
+    fail-swap-on: "true"
     make-iptables-util-chains: "true"
     iptables-masquerade-all: "false"
     feature-gates: "RotateKubeletServerCertificate=true"
