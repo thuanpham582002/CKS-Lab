@@ -245,8 +245,7 @@ runcmd:
     rm -f cilium-linux-${CLI_ARCH}.tar.gz cilium-linux-${CLI_ARCH}.tar.gz.sha256sum
 
   # Install Cilium CNI and verify
-  - export KUBECONFIG=/etc/kubernetes/admin.conf
-  - cilium install --version 1.18.4
+  - bash -c 'export KUBECONFIG=/etc/kubernetes/admin.conf && cilium install --version 1.18.4'
   - kubectl wait --for=condition=ready pods -n kube-system -l app.kubernetes.io/part-of=cilium --timeout=300s
   - echo "Cilium pods are ready"
 
