@@ -27,29 +27,27 @@ The CKS Lab provides a comprehensive security-hardened Kubernetes environment wi
 
 ### Choosing the Right Cloud-Init File
 
-This lab provides architecture-specific cloud-init configurations:
+This lab provides platform-specific cloud-init configurations:
 
-- **`user-data-configured.yaml`**: For **ARM64** systems
-  - Apple Silicon (M1/M2/M3) with OrbStack
-  - AWS Graviton instances (m6g, c6g, etc.)
+**For OrbStack (macOS):**
+- **`cloud-init/orbstack/arm64.yaml`**: For **ARM64** systems
+  - Apple Silicon (M1/M2/M3)
   - Other ARM64 platforms
 
-- **`user-data-amd64.yaml`**: For **AMD64/Intel 64-bit** systems
-  - Standard x86_64 systems (most common)
-  - AWS EC2 (t3, m5, c5 instances)
-  - VMware, VirtualBox, KVM, Hyper-V
-  - Bare metal Intel/AMD servers
+- **`cloud-init/orbstack/amd64.yaml`**: For **AMD64/Intel 64-bit** systems
+  - Intel Mac
+
+**For AWS EC2:**
+- **`cloud-init/aws/user-data.yaml`**: Template for AWS EC2
+  - Supports both ARM64 and AMD64 instances
+  - Customize before deployment
 
 **Check your system architecture:**
 ```bash
 uname -m
-# Output: x86_64  → use user-data-amd64.yaml
-# Output: aarch64 → use user-data-configured.yaml
+# Output: x86_64  → use amd64.yaml
+# Output: aarch64 → use arm64.yaml
 ```
-
-**For macOS (OrbStack):**
-- Apple Silicon (M1/M2/M3): Use `user-data-configured.yaml`
-- Intel Mac: Use `user-data-amd64.yaml`
 
 ### Launch the CKS Lab VM
 
@@ -68,12 +66,12 @@ uname -m
      --key-name your-key-pair \
      --security-group-ids sg-xxxxxxxxxx \
      --subnet-id subnet-xxxxxxxxxx \
-     --user-data file://cloud-init/user-data.yaml \
+     --user-data file://cloud-init/aws/user-data.yaml \
      --tag-specifications 'ResourceType=instance,Tags=[{Key=Name,Value=cks-lab}]'
    ```
 
 2. **Customize Cloud-Init** (Optional):
-   Before launching, update these variables in `cloud-init/user-data.yaml`:
+   Before launching, update these variables in `cloud-init/aws/user-data.yaml`:
    - `${ssh_public_key}`: Add your SSH public key
    - `${encryption_secret}`: Generate with `openssl rand -base64 32`
 
@@ -113,10 +111,10 @@ OrbStack provides a fast, lightweight way to run the CKS Lab locally on macOS.
 
    # Create new VM with cloud-init
    # For Apple Silicon (M1/M2/M3):
-   orbctl create -c ./cloud-init/user-data-configured.yaml ubuntu:22.04 cks-lab
+   orbctl create -c ./cloud-init/orbstack/arm64.yaml ubuntu:22.04 cks-lab
 
    # For Intel Mac:
-   orbctl create -c ./cloud-init/user-data-amd64.yaml ubuntu:22.04 cks-lab
+   orbctl create -c ./cloud-init/orbstack/amd64.yaml ubuntu:22.04 cks-lab
    ```
 
 3. **Connect to the VM**:
@@ -153,10 +151,11 @@ OrbStack provides a fast, lightweight way to run the CKS Lab locally on macOS.
 ```
 cks-lab/
 ├── cloud-init/
-│   ├── user-data.yaml              # Main cloud-init template (AWS)
-│   ├── user-data-configured.yaml   # Configured for ARM64
-│   ├── user-data-amd64.yaml        # Configured for AMD64
-│   └── network-config.yaml         # Network configuration
+│   ├── orbstack/
+│   │   ├── arm64.yaml         # Configured for ARM64 (Apple Silicon)
+│   │   └── amd64.yaml         # Configured for AMD64 (Intel Mac)
+│   └── aws/
+│       └── user-data.yaml     # Template for AWS EC2
 ├── configs/
 │   ├── containerd-config.toml  # Container runtime security config
 │   ├── kubeadm-config.yaml     # Cluster initialization config
@@ -382,7 +381,10 @@ sudo systemctl restart kubelet
 ```bash
 # Complete reset (from macOS host)
 orbctl delete cks-lab
-orbctl create -c ./cloud-init/user-data-configured.yaml ubuntu:22.04 cks-lab
+# For Apple Silicon:
+orbctl create -c ./cloud-init/orbstack/arm64.yaml ubuntu:22.04 cks-lab
+# For Intel Mac:
+orbctl create -c ./cloud-init/orbstack/amd64.yaml ubuntu:22.04 cks-lab
 
 # Quick cluster reset (from inside VM)
 sudo kubeadm reset
