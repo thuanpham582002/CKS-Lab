@@ -1,0 +1,360 @@
+#cloud-config
+package_upgrade: true
+package_update: true
+timezone: UTC
+
+# Configure hostname
+hostname: cks-lab-node
+manage_etc_hosts: true
+
+# System hardening
+write_files:
+
+  # Kernel security parameters
+  - path: /etc/sysctl.d/99-cks-security.conf
+    permissions: '0644'
+    content: |
+      # Network Security
+      net.ipv4.ip_forward = 1
+      net.ipv4.conf.all.send_redirects = 0
+      net.ipv4.conf.default.send_redirects = 0
+      net.ipv4.conf.all.accept_redirects = 0
+      net.ipv4.conf.default.accept_redirects = 0
+      # net.ipv4.conf.all.accept_source_route = 0  # Not available on all kernels
+      # net.ipv4.conf.default.accept_source_route = 0  # Not available on all kernels
+      net.ipv4.conf.all.rp_filter = 1
+      net.ipv4.conf.default.rp_filter = 1
+
+      # Memory protection
+      vm.swappiness = 10
+      kernel.kptr_restrict = 2
+      kernel.dmesg_restrict = 1
+      kernel.kexec_load_disabled = 1
+
+      # File system
+      fs.protected_regular = 1
+      fs.protected_fifos = 1
+      fs.suid_dumpable = 0
+
+# Install packages
+packages:
+  - apt-transport-https
+  - ca-certificates
+  - curl
+  - gnupg
+  - lsb-release
+  - software-properties-common
+  - ufw
+  - apparmor
+  - apparmor-utils
+  - auditd
+  - unzip
+  - wget
+  - dnsutils
+  - net-tools
+  - iproute2
+  - iputils-ping
+  - curl
+  - telnet
+  - nmap
+  - tcpdump
+  - traceroute
+  - mtr
+  - lsof
+  - strace
+  - jq
+  - yq
+  - tracee
+  
+runcmd:
+  # Enable and configure firewall
+  - ufw --force enable
+  - ufw default deny incoming
+  - ufw default allow outgoing
+  - ufw allow ssh
+  - ufw allow 6443/tcp  # Kubernetes API server
+  - ufw allow 10250/tcp  # Kubelet API
+  - ufw reload
+
+  # Enable AppArmor
+  - systemctl enable apparmor
+  - systemctl start apparmor
+  - aa-enforce /etc/apparmor.d/*
+
+  # Enable auditd
+  - systemctl enable auditd
+  - systemctl start auditd
+
+  # Add Kubernetes repository (latest stable as of September 2025)
+  - curl -fsSL https://pkgs.k8s.io/core:/stable:/v1.34/deb/Release.key | gpg --dearmor -o /etc/apt/keyrings/kubernetes-apt-keyring.gpg
+  - echo 'deb [signed-by=/etc/apt/keyrings/kubernetes-apt-keyring.gpg] https://pkgs.k8s.io/core:/stable:/v1.34/deb/ /' | tee /etc/apt/sources.list.d/kubernetes.list
+
+  # Add Docker repository for containerd
+  - install -m 0755 -d /etc/apt/keyrings
+  - curl -fsSL https://download.docker.com/linux/ubuntu/gpg | gpg --dearmor -o /etc/apt/keyrings/docker.gpg
+  - chmod a+r /etc/apt/keyrings/docker.gpg
+  - echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu jammy stable" | tee /etc/apt/sources.list.d/docker.list > /dev/null
+
+  # Add cri-dockerd repository for proper Docker CRI support
+  - curl -fsSL https://download.opensuse.org/repositories/devel:kubic:libcontainers:stable/xUbuntu_22.04/Release.key | gpg --dearmor | sudo tee /etc/apt/keyrings/cri-dockerd.gpg > /dev/null
+  - echo "deb [signed-by=/etc/apt/keyrings/cri-dockerd.gpg] https://download.opensuse.org/repositories/devel:kubic:libcontainers:stable/xUbuntu_22.04/ /" | sudo tee /etc/apt/sources.list.d/cri-dockerd.list > /dev/null
+
+  # Update package lists
+  - apt-get update
+
+  # Install Docker as container runtime (CKS exam setup)
+  - apt-get install -y docker.io
+  - systemctl enable docker
+  - systemctl start docker
+
+  # Install cri-dockerd manually for better compatibility (v0.3.21)
+  - curl -L https://github.com/Mirantis/cri-dockerd/releases/download/v0.3.21/cri-dockerd-0.3.21.amd64.tgz -o cri-dockerd.tgz
+  - tar -xzf cri-dockerd.tgz
+  - sudo cp cri-dockerd/cri-dockerd /usr/local/bin/
+  - sudo chmod +x /usr/local/bin/cri-dockerd
+
+  # Download and install cri-dockerd systemd service
+  - curl -L https://raw.githubusercontent.com/Mirantis/cri-dockerd/v0.3.21/packaging/systemd/cri-docker.service -o cri-docker.service
+  - curl -L https://raw.githubusercontent.com/Mirantis/cri-dockerd/v0.3.21/packaging/systemd/cri-docker.socket -o cri-docker.socket
+  - sudo mv cri-docker.service cri-docker.socket /etc/systemd/system/
+
+  # Fix cri-dockerd path in service file
+  - sudo sed -i 's|/usr/bin/cri-dockerd|/usr/local/bin/cri-dockerd|g' /etc/systemd/system/cri-docker.service
+
+  # Enable and start cri-dockerd service
+  - sudo systemctl daemon-reload
+  - sudo systemctl enable --now cri-docker.socket
+  - sudo systemctl enable --now cri-docker.service
+
+  # Configure Docker daemon for Kubernetes with CRI support
+  - |
+    cat <<EOF | sudo tee /etc/docker/daemon.json
+    {
+      "exec-opts": ["native.cgroupdriver=systemd"],
+      "log-driver": "json-file",
+      "log-opts": {
+        "max-size": "100m"
+      },
+      "storage-driver": "overlay2",
+      "live-restore": true,
+      "userland-proxy": false,
+      "experimental": true,
+      "metrics-addr": "127.0.0.1:9323"
+    }
+    EOF
+
+  # Create systemd service directory for Docker overrides
+  - mkdir -p /etc/systemd/system/docker.service.d
+
+  # Create Docker service override to ensure CRI socket
+  - |
+    cat <<EOF | sudo tee /etc/systemd/system/docker.service.d/cri.conf
+    [Service]
+    ExecStart=
+    ExecStart=/usr/bin/dockerd
+    Environment="DOCKERD_OPTS=--containerd=/run/containerd/containerd.sock"
+    EOF
+
+  - systemctl daemon-reload
+  - systemctl restart docker
+
+  # Verify Docker and cri-dockerd are running
+  - sleep 10
+  - docker info
+  - ls -la /var/run/docker.sock
+  - ls -la /var/run/cri-dockerd.sock
+  - cri-dockerd --version
+
+  # Install Kubernetes components (exact version 1.34.1)
+  - apt-get install -y kubelet=1.34.1-1.1 kubeadm=1.34.1-1.1 kubectl=1.34.1-1.1
+  - apt-mark hold kubelet kubeadm kubectl
+  - systemctl enable kubelet
+
+  # Disable swap (required for Kubernetes) - using systemd service for OrbStack
+  - |
+    cat <<'EOF' > /usr/local/bin/disable-swap.sh
+    #!/bin/bash
+    logger "Disabling swap for Kubernetes..."
+    swapoff -a
+    if [ $? -eq 0 ]; then
+      logger "Swap disabled successfully"
+    else
+      logger "Failed to disable swap"
+      exit 1
+    fi
+    EOF
+  - chmod +x /usr/local/bin/disable-swap.sh
+  - |
+    cat <<'EOF' > /etc/systemd/system/disable-swap.service
+    [Unit]
+    Description=Disable swap for Kubernetes
+    After=multi-user.target
+    Before=kubelet.service
+
+    [Service]
+    Type=oneshot
+    ExecStart=/usr/local/bin/disable-swap.sh
+    RemainAfterExit=yes
+
+    [Install]
+    WantedBy=multi-user.target
+    EOF
+  - systemctl daemon-reload
+  - systemctl enable disable-swap.service
+  - systemctl start disable-swap.service
+
+  # Enable kernel modules
+  - |
+    cat <<EOF | tee /etc/modules-load.d/k8s.conf
+    overlay
+    br_netfilter
+    EOF
+  - modprobe overlay
+  - modprobe br_netfilter
+
+  # Apply sysctl params
+  - sysctl --system
+
+  # Create Kubernetes directories
+  - mkdir -p /etc/kubernetes/pki
+  - mkdir -p /var/lib/kubernetes
+  - mkdir -p /var/log/kubernetes
+
+  # Initialize Kubernetes cluster
+  - echo "Starting Kubernetes cluster initialization..."
+  - kubeadm init --kubernetes-version=v1.34.1 --pod-network-cidr=10.244.0.0/16 --cri-socket=unix:///var/run/cri-dockerd.sock --ignore-preflight-errors=NumCPU
+  - echo "Kubeadm init completed successfully"
+  - sleep 30
+  - echo "Configuring kubectl for root user..."
+  - mkdir -p /root/.kube
+  - cp -i /etc/kubernetes/admin.conf /root/.kube/config
+  - export KUBECONFIG=/etc/kubernetes/admin.conf
+  - kubectl wait --for=condition=ready pods -n kube-system -l component=kube-apiserver --timeout=300s
+  - echo "API server is ready"
+  - kubectl taint nodes --all node-role.kubernetes.io/control-plane-
+  - echo "Node taint removed"
+
+  # Download and install Cilium CLI
+  - |
+    CILIUM_CLI_VERSION=$(curl -s https://raw.githubusercontent.com/cilium/cilium-cli/main/stable.txt)
+    CLI_ARCH=amd64
+    if [ "$(uname -m)" = "aarch64" ]; then CLI_ARCH=arm64; fi
+    curl -L --fail --remote-name-all https://github.com/cilium/cilium-cli/releases/download/${CILIUM_CLI_VERSION}/cilium-linux-${CLI_ARCH}.tar.gz{,.sha256sum}
+    sha256sum --check cilium-linux-${CLI_ARCH}.tar.gz.sha256sum
+    sudo tar xzvfC cilium-linux-${CLI_ARCH}.tar.gz /usr/local/bin/
+    rm -f cilium-linux-${CLI_ARCH}.tar.gz cilium-linux-${CLI_ARCH}.tar.gz.sha256sum
+
+  # Install Cilium CNI and verify
+  - bash -c 'export KUBECONFIG=/etc/kubernetes/admin.conf && cilium install --version 1.18.4'
+  - kubectl wait --for=condition=ready pods -n kube-system -l app.kubernetes.io/part-of=cilium --timeout=300s
+  - echo "Cilium pods are ready"
+
+  # Configure kube-proxy with custom conntrack settings
+  - |
+    cat <<'EOF' > /tmp/kube-proxy-config.yaml
+    apiVersion: v1
+    kind: ConfigMap
+    metadata:
+      name: kube-proxy
+      namespace: kube-system
+    data:
+      config.conf: |-
+        apiVersion: kubeproxy.config.k8s.io/v1alpha1
+        bindAddress: 0.0.0.0
+        bindAddressHardFail: false
+        clientConnection:
+          acceptContentTypes: ""
+          burst: 10
+          contentType: ""
+          kubeconfig: /var/lib/kube-proxy/kubeconfig.conf
+          qps: 5
+        clusterCIDR: 10.244.0.0/16
+        configSyncPeriod: 0s
+        conntrack:
+          maxPerCore: 0
+          min: 0
+          tcpBeLiberal: false
+          tcpCloseWaitTimeout: 0s
+          tcpEstablishedTimeout: 0s
+          udpStreamTimeout: 0s
+          udpTimeout: 0s
+        detectLocal:
+          bridgeInterface: ""
+          interfaceNamePrefix: ""
+          detectLocalMode: ""
+        enableProfiling: false
+        healthzBindAddress: ""
+        hostnameOverride: ""
+        iptables:
+          localhostNodePorts: null
+          masqueradeAll: false
+          masqueradeBit: null
+          minSyncPeriod: 0s
+          syncPeriod: 30s
+        ipvs:
+          excludeCIDRs: null
+          minSyncPeriod: 0s
+          scheduler: ""
+          strictARP: false
+          syncPeriod: 0s
+          tcpFinTimeout: 0s
+          tcpTimeout: 0s
+          udpTimeout: 0s
+        kind: KubeProxyConfiguration
+        logging:
+          flushFrequency: 0
+          options:
+            json:
+              infoBufferSize: "0"
+            text:
+              infoBufferSize: "0"
+          verbosity: 0
+        metricsBindAddress: ""
+        mode: "iptables"
+        nftables:
+          masqueradeAll: false
+          masqueradeBit: null
+          minSyncPeriod: 0s
+          syncPeriod: 0s
+        nodePortAddresses: null
+        oomScoreAdj: null
+        portRange: ""
+        showHiddenMetricsForVersion: ""
+        winkernel:
+          enableDSR: false
+          forwardHealthCheckVip: false
+          networkName: ""
+          rootHnsEndpointName: ""
+          sourceVip: ""
+    EOF
+  - kubectl apply -f /tmp/kube-proxy-config.yaml
+  - kubectl delete pods -n kube-system -l k8s-app=kube-proxy
+  - kubectl wait --for=condition=ready pods -n kube-system -l k8s-app=kube-proxy --timeout=300s
+  - echo "kube-proxy configured with custom conntrack settings and restarted successfully"
+
+  - kubectl get nodes -o wide
+  - kubectl get pods -n kube-system
+  - echo "Kubernetes cluster setup completed successfully!"
+
+  # Install security tools (updated versions as of September 2025)
+  - |
+    # Install kube-bench (v0.8.0 - latest stable) for AMD64
+    curl -L https://github.com/aquasecurity/kube-bench/releases/download/v0.8.0/kube-bench_0.8.0_linux_amd64.deb -o /tmp/kube-bench.deb
+    sudo dpkg -i /tmp/kube-bench.deb || sudo apt-get install -f -y
+
+  - |
+    # Install Trivy (v0.55.0 - latest stable) for AMD64
+    wget https://github.com/aquasecurity/trivy/releases/download/v0.55.0/trivy_0.55.0_Linux-64bit.tar.gz -O /tmp/trivy.tar.gz
+    tar -xzf /tmp/trivy.tar.gz -C /tmp
+    sudo mv /tmp/trivy /usr/local/bin/
+    sudo chmod +x /usr/local/bin/trivy
+
+  - |
+    # Install Helm (v3.17.0 - latest stable) for AMD64
+    curl https://get.helm.sh/helm-v3.17.0-linux-amd64.tar.gz -o /tmp/helm.tar.gz
+    tar -zxvf /tmp/helm.tar.gz -C /tmp
+    sudo mv /tmp/linux-amd64/helm /usr/local/bin/
+    sudo chmod +x /usr/local/bin/helm
+
+  # Final system hardening
+  - chmod 600 /etc/kubernetes/pki/* || true

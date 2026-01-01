@@ -25,6 +25,32 @@ The CKS Lab provides a comprehensive security-hardened Kubernetes environment wi
 - macOS machine with 16GB+ RAM recommended
 - OrbStack configured with adequate resources (CPU: 4+, RAM: 16GB)
 
+### Choosing the Right Cloud-Init File
+
+This lab provides architecture-specific cloud-init configurations:
+
+- **`user-data-configured.yaml`**: For **ARM64** systems
+  - Apple Silicon (M1/M2/M3) with OrbStack
+  - AWS Graviton instances (m6g, c6g, etc.)
+  - Other ARM64 platforms
+
+- **`user-data-amd64.yaml`**: For **AMD64/Intel 64-bit** systems
+  - Standard x86_64 systems (most common)
+  - AWS EC2 (t3, m5, c5 instances)
+  - VMware, VirtualBox, KVM, Hyper-V
+  - Bare metal Intel/AMD servers
+
+**Check your system architecture:**
+```bash
+uname -m
+# Output: x86_64  → use user-data-amd64.yaml
+# Output: aarch64 → use user-data-configured.yaml
+```
+
+**For macOS (OrbStack):**
+- Apple Silicon (M1/M2/M3): Use `user-data-configured.yaml`
+- Intel Mac: Use `user-data-amd64.yaml`
+
 ### Launch the CKS Lab VM
 
 #### Option 1: AWS EC2 Instance
@@ -86,7 +112,11 @@ OrbStack provides a fast, lightweight way to run the CKS Lab locally on macOS.
    orbctl delete cks-lab
 
    # Create new VM with cloud-init
+   # For Apple Silicon (M1/M2/M3):
    orbctl create -c ./cloud-init/user-data-configured.yaml ubuntu:22.04 cks-lab
+
+   # For Intel Mac:
+   orbctl create -c ./cloud-init/user-data-amd64.yaml ubuntu:22.04 cks-lab
    ```
 
 3. **Connect to the VM**:
@@ -123,9 +153,10 @@ OrbStack provides a fast, lightweight way to run the CKS Lab locally on macOS.
 ```
 cks-lab/
 ├── cloud-init/
-│   ├── user-data.yaml          # Main cloud-init template (AWS)
-│   ├── user-data-configured.yaml # Configured cloud-init (OrbStack-ready)
-│   └── network-config.yaml     # Network configuration
+│   ├── user-data.yaml              # Main cloud-init template (AWS)
+│   ├── user-data-configured.yaml   # Configured for ARM64
+│   ├── user-data-amd64.yaml        # Configured for AMD64
+│   └── network-config.yaml         # Network configuration
 ├── configs/
 │   ├── containerd-config.toml  # Container runtime security config
 │   ├── kubeadm-config.yaml     # Cluster initialization config
