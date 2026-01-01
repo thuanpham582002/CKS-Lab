@@ -146,6 +146,66 @@ OrbStack provides a fast, lightweight way to run the CKS Lab locally on macOS.
 - The VM will automatically reboot after cloud-init completes
 - First boot may take 5-10 minutes for Kubernetes installation
 
+#### Option 3: Lima (macOS)
+
+Lima provides complete Linux VMs with full system images and better isolation than OrbStack.
+
+**Prerequisites:**
+- Lima installed: `brew install lima`
+- macOS 13+ for Virtualization framework (vz)
+- Recommended: 8GB+ RAM available
+
+**Deploy with Lima:**
+```bash
+# Navigate to cks-lab directory
+cd /path/to/cks-lab
+
+# Start Lima VM
+# For Apple Silicon (M1/M2/M3):
+limactl start --name=cks-lab ./cloud-init/lima/cks-lab-arm64.yaml
+
+# For Intel Mac:
+limactl start --name=cks-lab ./cloud-init/lima/cks-lab-amd64.yaml
+
+# Shell into the VM
+limactl shell cks-lab
+
+# Or list instances to see SSH details
+limactl list
+```
+
+**Verification:**
+```bash
+# Inside the VM, check cluster status
+kubectl get nodes
+kubectl get pods --all-namespaces
+
+# Verify swap is disabled
+free -h                    # Swap should be 0B
+systemctl status disable-swap.service  # Should be active
+
+# Run validation script
+./scripts/validate-cluster.sh
+```
+
+**Lima vs OrbStack:**
+| Feature | Lima | OrbStack |
+|---------|-------|----------|
+| VM Isolation | Complete VM | Lightweight container |
+| Resource Usage | Higher | Lower |
+| Startup Time | Slower (~2-3 min) | Faster (~30s) |
+| System Image | Full Ubuntu cloud image | Minimal |
+| Use Case | Production-like, full testing | Quick development |
+| Kubernetes Support | ✅ Full support | ✅ Full support |
+
+**Lima-Specific Notes:**
+- Lima creates complete Linux VMs using Apple's Virtualization framework
+- First boot takes 2-3 minutes for VM initialization
+- Subsequent boots are much faster (~30 seconds)
+- Port forwarding automatically configured for Kubernetes
+- Home directory mounted read-only from host
+- All cloud-init scripts run automatically via provision system
+
 ## Lab Structure
 
 ```
@@ -154,6 +214,9 @@ cks-lab/
 │   ├── orbstack/
 │   │   ├── arm64.yaml         # Configured for ARM64 (Apple Silicon)
 │   │   └── amd64.yaml         # Configured for AMD64 (Intel Mac)
+│   ├── lima/
+│   │   ├── cks-lab-arm64.yaml # Lima template for ARM64
+│   │   └── cks-lab-amd64.yaml # Lima template for AMD64
 │   └── aws/
 │       └── user-data.yaml     # Template for AWS EC2
 ├── configs/
