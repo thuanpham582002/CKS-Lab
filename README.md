@@ -160,7 +160,7 @@ Lima provides complete Linux VMs with full system images and better isolation th
 # Navigate to cks-lab directory
 cd /path/to/cks-lab
 
-# Start Lima VM
+# Start Lima VM (first time takes 5-10 minutes)
 # For Apple Silicon (M1/M2/M3):
 limactl start --name=cks-lab ./cloud-init/lima/cks-lab-arm64.yaml
 
@@ -170,8 +170,23 @@ limactl start --name=cks-lab ./cloud-init/lima/cks-lab-amd64.yaml
 # Shell into the VM
 limactl shell cks-lab
 
-# Or list instances to see SSH details
+# Check VM status
 limactl list
+```
+
+**Lima VM Management:**
+```bash
+# Stop VM
+limactl stop cks-lab
+
+# Start VM (after initial creation)
+limactl start cks-lab
+
+# Delete VM (complete reset)
+limactl delete cks-lab -f
+
+# View VM logs
+tail -f ~/.lima/cks-lab/serial*.log
 ```
 
 **Verification:**
