@@ -10,7 +10,6 @@ disk: "100GiB"
 images:
   - location: "https://cloud-images.ubuntu.com/releases/22.04/release/ubuntu-22.04-server-cloudimg-arm64.img"
     arch: "aarch64"
-    digest: "sha256:8a94e7f3e2b4d6d8b4e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e"
 
 # Mount home directory read-only
 mounts:
@@ -25,16 +24,19 @@ ssh:
 hostResolver:
   enabled: true
 
+# Disable Lima's containerd (we use Docker + cri-dockerd for Kubernetes)
+containerd:
+  system: false
+  user: false
+
 # Port forwarding for Kubernetes
 portForwards:
   - guestPort: 6443
     hostPort: 6443
     proto: tcp
-    description: "Kubernetes API Server"
   - guestPortRange: [30000, 32767]
     hostPortRange: [30000, 32767]
     proto: tcp
-    description: "Kubernetes NodePort Range"
 
 # Provisioning script converted from cloud-init
 provision:
@@ -104,9 +106,7 @@ provision:
         mtr \
         lsof \
         strace \
-        jq \
-        yq \
-        tracee
+        jq
 
       # Enable and configure firewall
       ufw --force enable
@@ -281,7 +281,7 @@ provision:
       rm -f cilium-linux-${CLI_ARCH}.tar.gz cilium-linux-${CLI_ARCH}.tar.gz.sha256sum
 
       # Install Cilium CNI and verify
-      bash -c 'export KUBECONFIG=/etc/kubernetes/admin.conf && cilium install --version 1.18.4'
+      bash -c 'export HOME=/root && export KUBECONFIG=/etc/kubernetes/admin.conf && cilium install --version 1.18.4'
       kubectl wait --for=condition=ready pods -n kube-system -l app.kubernetes.io/part-of=cilium --timeout=300s
       echo "Cilium pods are ready"
 
@@ -387,6 +387,17 @@ provision:
       tar -zxvf /tmp/helm.tar.gz -C /tmp
       mv /tmp/linux-arm64/helm /usr/local/bin/
       chmod +x /usr/local/bin/helm
+
+      # Install Falco (v0.40.0) for ARM64
+      echo "=== Installing Falco runtime security ==="
+      curl -L -O https://download.falco.org/packages/bin/aarch64/falco-0.40.0-aarch64.tar.gz
+      tar -xvf falco-0.40.0-aarch64.tar.gz
+      cp -R falco-0.40.0-aarch64/* /
+      rm -rf falco-0.40.0-aarch64*
+
+      # Install Falco dependencies for eBPF probe
+      apt-get update -y
+      apt-get install -y dkms make linux-headers-$(uname -r) clang llvm
 
       # Final system hardening
       chmod 600 /etc/kubernetes/pki/* || true

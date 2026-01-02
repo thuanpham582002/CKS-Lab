@@ -32,12 +32,16 @@ ssh:
 hostResolver:
   enabled: true
 
+# Disable Lima's containerd (we use Docker + cri-dockerd for Kubernetes)
+containerd:
+  system: false
+  user: false
+
 # Port forwarding for Kubernetes
 portForwards:
   - guestPort: 6443
     hostPort: 6443
     proto: tcp
-    description: "Kubernetes API Server"
   - guestPortRange:
       min: 30000
       max: 32767
@@ -45,7 +49,6 @@ portForwards:
       min: 30000
       max: 32767
     proto: tcp
-    description: "Kubernetes NodePort range"
 
 # Provisioning scripts
 provision:
@@ -97,9 +100,7 @@ provision:
         mtr \
         lsof \
         strace \
-        jq \
-        yq \
-        tracee
+        jq
 
       # Kernel security parameters
       echo "=== Configuring kernel security parameters ==="
@@ -339,6 +340,7 @@ provision:
 
       # Install Cilium CNI
       echo "=== Installing Cilium CNI ==="
+      export HOME=/root
       export KUBECONFIG=/etc/kubernetes/admin.conf
       cilium install --version 1.18.4
 
@@ -455,6 +457,17 @@ provision:
       tar -zxvf /tmp/helm.tar.gz -C /tmp
       sudo mv /tmp/linux-amd64/helm /usr/local/bin/
       sudo chmod +x /usr/local/bin/helm
+
+      # Install Falco (v0.40.0) for AMD64
+      echo "=== Installing Falco runtime security ==="
+      curl -L -O https://download.falco.org/packages/bin/x86_64/falco-0.40.0-x86_64.tar.gz
+      tar -xvf falco-0.40.0-x86_64.tar.gz
+      cp -R falco-0.40.0-x86_64/* /
+      rm -rf falco-0.40.0-x86_64*
+
+      # Install Falco dependencies for eBPF probe
+      apt-get update -y
+      apt-get install -y dkms make linux-headers-$(uname -r) clang llvm
 
       # Final system hardening
       chmod 600 /etc/kubernetes/pki/* || true
